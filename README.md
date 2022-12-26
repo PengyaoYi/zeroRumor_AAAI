@@ -22,6 +22,22 @@ This work is a joint study with the support of Beijing University of Posts and T
 
 If you find this resource useful, please let us know and cite our paper:
 ```
-@article{
+@misc{https://doi.org/10.48550/arxiv.2212.01117,
+  doi = {10.48550/ARXIV.2212.01117},
+  
+  url = {https://arxiv.org/abs/2212.01117},
+  
+  author = {Lin, Hongzhan and Yi, Pengyao and Ma, Jing and Jiang, Haiyun and Luo, Ziyang and Shi, Shuming and Liu, Ruifang},
+  
+  keywords = {Computation and Language (cs.CL), FOS: Computer and information sciences, FOS: Computer and information sciences},
+  
+  title = {Zero-Shot Rumor Detection with Propagation Structure via Prompt Learning},
+  
+  publisher = {arXiv},
+  
+  year = {2022},
+  
+  copyright = {arXiv.org perpetual, non-exclusive license}
 }
+
 ```
