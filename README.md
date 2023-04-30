@@ -1,4 +1,4 @@
-Code for our AAAI 2023 paper - Zero-Shot Rumor Detection with Propagation Structure via Prompt Learning will be released soon...
+Official code for our AAAI 2023 paper - Zero-Shot Rumor Detection with Propagation Structure via Prompt Learning.
 
 ## Requirements
 ```
