@@ -12,7 +12,9 @@ sentence-transformers==0.4.0
 ```
 
 ## Get Started
-Run script
+- data: download the processed data from: https://drive.google.com/file/d/1BZ-6a8chFCVATEyXH1vMO_CPAMOL0z-p/view
+or run the pre-process code comment.py in data dir, you need to run the code for different type of data separately
+- Run script
 ```
 $ sh train.sh
 ```
