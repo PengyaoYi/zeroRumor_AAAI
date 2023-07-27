@@ -700,7 +700,8 @@ class FewShotDataset(torch.utils.data.Dataset):
             # Tokenization (based on the template)
             inputs = tokenize_multipart_input(
                 input_text_list=augmented_example,
-                max_length=max_length,
+                context_max_length=context_max_length,
+                template_max_length=template_max_length,
                 tokenizer=self.tokenizer,
                 task_name=self.args.task_name,
                 prompt=prompt,
