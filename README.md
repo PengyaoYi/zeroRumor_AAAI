@@ -14,6 +14,7 @@ sentence-transformers==0.4.0
 ## Get Started
 - data: download the processed data from: https://drive.google.com/file/d/1BZ-6a8chFCVATEyXH1vMO_CPAMOL0z-p/view
 or run the pre-process code comment.py in data dir, you need to run the code for different type of data separately
+- pretrain-model: xlm-roberta , the top 6 layers inited in our model twice: https://drive.google.com/file/d/1kF8rG1RZ1G3CFsuiIJMYgQHuaAKCFsE4/view?usp=drive_link
 - Run script
 ```
 $ sh train.sh
