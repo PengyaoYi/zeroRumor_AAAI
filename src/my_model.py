@@ -85,12 +85,12 @@ class RobertaThreePart(BertPreTrainedModel):
         self.alp = config.alp
         self.noise_norm = config.noise_norm
         self.activa = config.tem_activa
-        self.position_mode = config.position
+        self.position_mode = True
 
         self.template_tower = XLMRobertaModel_trans(config, add_pooling_layer=False)
         self.context_tower = XLMRobertaModel_trans(config, add_pooling_layer=False)
         self.fusion_tower = XLMRobertaModel_trans(config, fusion=True)
-        self.pool_sent_limit = config.pooling_sent_limit
+        self.pool_sent_limit = 128
         self.fusion_embedding = nn.Embedding(self.pool_sent_limit, config.hidden_size) 
 
 
