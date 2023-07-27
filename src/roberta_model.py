@@ -354,7 +354,7 @@ class RobertaEncoder_trans(nn.Module):
     def __init__(self, config, dep=True, fusion=False):
         super().__init__()
         self.config = config
-        self.low_layer_num = config.low_layer
+        self.low_layer_num = 6
         self.tem_layer = nn.ModuleList([RobertaLayer(config) for _ in range(config.num_hidden_layers)])
         if not dep:
             self.layer = self.tem_layer
