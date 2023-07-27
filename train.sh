@@ -18,7 +18,4 @@ python run.py \
     --cl_nn_size 64 \
     --alp 0.5 \
     --noise_norm 1.5 \
-    --grad_loss \
-    --position_dataset \
-    --position \
-    --pooling_sent_limit 128
+    --grad_loss
