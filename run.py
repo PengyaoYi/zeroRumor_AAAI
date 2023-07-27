@@ -20,7 +20,7 @@ from src.dataset import FewShotDataset
 #from src.models import BertForPromptFinetuning, RobertaForPromptFinetuning, resize_token_type_embeddings
 from src.my_model import RobertaThreePart
 from src.trainer import Trainer
-from src.processors import processors_mapping, num_labels_mapping, output_modes_mapping, compute_metrics_mapping, bound_mapping
+from src.processors import processors_mapping, num_labels_mapping, output_modes_mapping, compute_metrics_mapping
 
 from filelock import FileLock
 from datetime import datetime
