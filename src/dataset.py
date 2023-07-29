@@ -39,8 +39,9 @@ class OurInputFeatures(InputFeatures):
     template_attention_mask: Optional[List[int]] = None
     mask_pos: Optional[List[int]] = None  # Position of the mask token
     comment_pos: Optional[List[int]] = None
-    # false_soft_label: Optional = None
-    # true_soft_label: Optional = None
+    relation: Optional = None
+    relation_sent: Optional = None
+    abs_relation: Optional = None
     label_word_list: Optional[List[int]] = None  # Label word mapping (dynamic)
 
     def to_json_string(self):
@@ -72,184 +73,187 @@ def tokenize_multipart_input(
         context_max_length,
         template_max_length,
         tokenizer,
-        task_name=None,
-        prompt=False,
+        position_dataset=False,
         template=None,
         label_word_list=None,
-        first_sent_limit=None,
-        other_sent_limit=None,
-        gpt3=False,
+        pooling_sent_limit=None,
         truncate_head=False,
         support_labels=None,
-        mode='train'
 ):
     def enc(text):
         return tokenizer.encode(text, add_special_tokens=False)
-
+    relation_dict = input_text_list[1]
+    relation = relation_dict['relation']
+    abs_relation = relation_dict['abs_relation']
+    input_text_list = [input_text_list[0]]
     input_ids = []
     attention_mask = []
     token_type_ids = []  # Only for BERT
     template_attention_mask = []
     template_token_type_ids = []  # Only for BERT
+    pooling_sent_limit = pooling_sent_limit
     mask_pos = None
     comment_pos = None# Position of the mask token
 
-    if prompt:
-        """
-        Concatenate all sentences and prompts based on the provided template.
-        Template example: '*cls*It was*mask*.*sent_0**<sep>*label_0:*sent_1**<sep>**label_1*:*sent_2**<sep>*'
-        *xx* represent variables:
-            *cls*: cls_token
-            *mask*: mask_token
-            *sep*: sep_token
-            *sep+*: sep_token, also means +1 for segment id
-            *sent_i*: sentence i (input_text_list[i])
-            *sent-_i*: same as above, but delete the last token
-            *sentl_i*: same as above, but use lower case for the first word
-            *sentl-_i*: same as above, but use lower case for the first word and delete the last token
-            *+sent_i*: same as above, but add a space before the sentence
-            *+sentl_i*: same as above, but add a space before the sentence and use lower case for the first word
-            *label_i*: label_word_list[i]
-            *label_x*: label depends on the example id (support_labels needed). this is only used in GPT-3's in-context learning
+    """
+    Concatenate all sentences and prompts based on the provided template.
+    Template example: '*cls*It was*mask*.*sent_0**<sep>*label_0:*sent_1**<sep>**label_1*:*sent_2**<sep>*'
+    *xx* represent variables:
+        *cls*: cls_token
+        *mask*: mask_token
+        *sep*: sep_token
+        *sep+*: sep_token, also means +1 for segment id
+        *sent_i*: sentence i (input_text_list[i])
+        *sent-_i*: same as above, but delete the last token
+        *sentl_i*: same as above, but use lower case for the first word
+        *sentl-_i*: same as above, but use lower case for the first word and delete the last token
+        *+sent_i*: same as above, but add a space before the sentence
+        *+sentl_i*: same as above, but add a space before the sentence and use lower case for the first word
+        *label_i*: label_word_list[i]
+        *label_x*: label depends on the example id (support_labels needed). this is only used in GPT-3's in-context learning
 
-        Use "_" to replace space.
-        PAY ATTENTION TO SPACE!! DO NOT leave space before variables, for this will lead to extra space token.
-        """
-        assert template is not None
+    Use "_" to replace space.
+    PAY ATTENTION TO SPACE!! DO NOT leave space before variables, for this will lead to extra space token.
+    """
+    assert template is not None
 
-        special_token_mapping = {
-            'cls': tokenizer.cls_token_id, 'mask': tokenizer.mask_token_id, 'sep': tokenizer.sep_token_id,
-            'sep+': tokenizer.sep_token_id,
-        }
-        template_list = template.split('*')  # Get variable list in the template
-        segment_id = 0  # Current segment id. Segment id +1 if encountering sep+.
-        template_ids = []
-        sent_flag = True
-        for part_id, part in enumerate(template_list):
-            if part == 'sep+':
-                break
-            new_tokens = []
-            segment_plus_1_flag = False
-            if part in special_token_mapping:
-                if part == 'cls' and 'T5' in type(tokenizer).__name__:
-                    # T5 does not have cls token
-                    continue
-                new_tokens.append(special_token_mapping[part])
-                if part == 'sep+':
-                    segment_plus_1_flag = True
-            elif part[:6] == 'label_':
-                # Note that label_word_list already has extra space, so do not add more space ahead of it.
-                label_id = int(part.split('_')[1])
-                label_word = label_word_list[label_id]
-                new_tokens.append(label_word)
-            elif part[:7] == 'labelx_':
-                instance_id = int(part.split('_')[1])
-                label_id = support_labels[instance_id]
-                label_word = label_word_list[label_id]
-                new_tokens.append(label_word)
-            elif part[:5] == 'sent_':
-                sent_id = int(part.split('_')[1])
-                new_tokens += enc(input_text_list[sent_id])
-            elif part[:6] == '+sent_':
-                # Add space
-                sent_id = int(part.split('_')[1])
-                new_tokens += enc(' ' + input_text_list[sent_id])
-            elif part[:6] == 'sent-_':
-                # Delete the last token
-                sent_id = int(part.split('_')[1])
-                new_tokens += enc(input_text_list[sent_id][:-1])
-            elif part[:6] == 'sentl_':
-                # Lower case the first token
-                sent_id = int(part.split('_')[1])
-                text = input_text_list[sent_id]
-                text = text[:1].lower() + text[1:]
-                new_tokens += enc(text)
-            elif part[:7] == '+sentl_':
-                # Lower case the first token and add space 
-                sent_id = int(part.split('_')[1])
-                text = input_text_list[sent_id]
-                text = text[:1].lower() + text[1:]
-                new_tokens += enc(' ' + text)
-            elif part[:7] == 'sentl-_':
-                # Lower case the first token and discard the last token
-                sent_id = int(part.split('_')[1])
-                text = input_text_list[sent_id]
-                text = text[:1].lower() + text[1:]
-                new_tokens += enc(text[:-1])
-            elif part[:6] == 'sentu_':
-                # Upper case the first token
-                sent_id = int(part.split('_')[1])
-                text = input_text_list[sent_id]
-                text = text[:1].upper() + text[1:]
-                new_tokens += enc(text)
-            elif part[:7] == '+sentu_':
-                # Upper case the first token and add space
-                sent_id = int(part.split('_')[1])
-                text = input_text_list[sent_id]
-                text = text[:1].upper() + text[1:]
-                new_tokens += enc(' ' + text)
-            else:
-                # Just natural language prompt
-                part = part.replace('_', ' ')
-                # handle special case when T5 tokenizer might add an extra space
-                if len(part) == 1:
-                    new_tokens.append(tokenizer._convert_token_to_id(part))
-                else:
-                    new_tokens += enc(part)
-
-            if part[:4] == 'sent' or part[1:5] == 'sent':
-                # If this part is the sentence, limit the sentence length
-                sent_id = int(part.split('_')[1])
-                if sent_id == 0:
-                    if first_sent_limit is not None:
-                        new_tokens = new_tokens[:first_sent_limit]
-                else:
-                    if other_sent_limit is not None:
-                        new_tokens = new_tokens[:other_sent_limit]
-            if part_id > 0 and template_list[part_id - 1][:4] == 'sent':
-                sent_flag = False
-            if not sent_flag:
-                template_ids += new_tokens
-                template_attention_mask += [1 for i in range(len(new_tokens))]
-                template_token_type_ids += [segment_id for i in range(len(new_tokens))]
-            else:
-                input_ids += new_tokens
-                attention_mask += [1 for i in range(len(new_tokens))]
-                token_type_ids += [segment_id for i in range(len(new_tokens))]
-
-            if segment_plus_1_flag:
-                segment_id += 1
-    else:
-        input_ids = [tokenizer.cls_token_id]
-        attention_mask = [1]
-        token_type_ids = [0]
-
-        for sent_id, input_text in enumerate(input_text_list):
-            if input_text is None:
-                # Do not have text_b
+    special_token_mapping = {
+        'cls': tokenizer.cls_token_id, 'mask': tokenizer.mask_token_id, 'sep': tokenizer.sep_token_id,
+        'sep+': tokenizer.sep_token_id,
+    }
+    template_list = template.split('*')  # Get variable list in the template
+    segment_id = 0  # Current segment id. Segment id +1 if encountering sep+.
+    template_ids = []
+    sent_flag = True
+    for part_id, part in enumerate(template_list):
+        if part == 'sep+':
+            break
+        new_tokens = []
+        segment_plus_1_flag = False
+        if part in special_token_mapping:
+            if part == 'cls' and 'T5' in type(tokenizer).__name__:
+                # T5 does not have cls token
                 continue
-            if pd.isna(input_text) or input_text is None:
-                # Empty input
-                input_text = ''
-            input_tokens = enc(input_text) + [tokenizer.sep_token_id]
-            input_ids += input_tokens
-            attention_mask += [1 for i in range(len(input_tokens))]
-            token_type_ids += [sent_id for i in range(len(input_tokens))]
+            new_tokens.append(special_token_mapping[part])
+            if part == 'sep+':
+                segment_plus_1_flag = True
+        elif part[:6] == 'label_':
+            # Note that label_word_list already has extra space, so do not add more space ahead of it.
+            label_id = int(part.split('_')[1])
+            label_word = label_word_list[label_id]
+            new_tokens.append(label_word)
+        elif part[:7] == 'labelx_':
+            instance_id = int(part.split('_')[1])
+            label_id = support_labels[instance_id]
+            label_word = label_word_list[label_id]
+            new_tokens.append(label_word)
+        elif part[:5] == 'sent_':
+            sent_id = int(part.split('_')[1])
+            new_tokens += enc(input_text_list[sent_id])
+        elif part[:6] == '+sent_':
+            # Add space
+            sent_id = int(part.split('_')[1])
+            new_tokens += enc(' ' + input_text_list[sent_id])
+        elif part[:6] == 'sent-_':
+            # Delete the last token
+            sent_id = int(part.split('_')[1])
+            new_tokens += enc(input_text_list[sent_id][:-1])
+        elif part[:6] == 'sentl_':
+            # Lower case the first token
+            sent_id = int(part.split('_')[1])
+            text = input_text_list[sent_id]
+            text = text[:1].lower() + text[1:]
+            new_tokens += enc(text)
+        elif part[:7] == '+sentl_':
+            # Lower case the first token and add space
+            sent_id = int(part.split('_')[1])
+            text = input_text_list[sent_id]
+            text = text[:1].lower() + text[1:]
+            new_tokens += enc(' ' + text)
+        elif part[:7] == 'sentl-_':
+            # Lower case the first token and discard the last token
+            sent_id = int(part.split('_')[1])
+            text = input_text_list[sent_id]
+            text = text[:1].lower() + text[1:]
+            new_tokens += enc(text[:-1])
+        elif part[:6] == 'sentu_':
+            # Upper case the first token
+            sent_id = int(part.split('_')[1])
+            text = input_text_list[sent_id]
+            text = text[:1].upper() + text[1:]
+            new_tokens += enc(text)
+        elif part[:7] == '+sentu_':
+            # Upper case the first token and add space
+            sent_id = int(part.split('_')[1])
+            text = input_text_list[sent_id]
+            text = text[:1].upper() + text[1:]
+            new_tokens += enc(' ' + text)
+        else:
+            # Just natural language prompt
+            part = part.replace('_', ' ')
+            # handle special case when T5 tokenizer might add an extra space
+            if len(part) == 1:
+                new_tokens.append(tokenizer._convert_token_to_id(part))
+            else:
+                new_tokens += enc(part)
 
-        if 'T5' in type(tokenizer).__name__:  # T5 does not have CLS token
-            input_ids = input_ids[1:]
-            attention_mask = attention_mask[1:]
-            token_type_ids = token_type_ids[1:]
+        if part[:4] == 'sent' or part[1:5] == 'sent':
+            # If this part is the sentence, limit the sentence length
+            sent_id = int(part.split('_')[1])
+        if part_id > 0 and template_list[part_id - 1][:4] == 'sent':
+            sent_flag = False
+        if not sent_flag:
+            template_ids += new_tokens
+            template_attention_mask += [1 for i in range(len(new_tokens))]
+            template_token_type_ids += [segment_id for i in range(len(new_tokens))]
+        else:
+            input_ids += new_tokens
+            attention_mask += [1 for i in range(len(new_tokens))]
+            token_type_ids += [segment_id for i in range(len(new_tokens))]
 
-    # Padding
-    if first_sent_limit is not None and len(input_ids) > max_length:
-        # If using sentence limit, the total length still exceeds the maximum limit, report a warning
-        logger.warn("Input exceeds max_length limit: {}".format(tokenizer.decode(input_ids)))
+        if segment_plus_1_flag:
+            segment_id += 1
 
+    relation_sent = None
+    abs_matrix = None
+    if position_dataset and isinstance(relation,list):
+        relation_sent = []
+        for i in range(len(relation)):
+            if i == pooling_sent_limit:
+                break
+            if len(relation[i]) < pooling_sent_limit:
+                relation_sent.append(relation[i] + [0] * (pooling_sent_limit - len(relation[i])))
+                assert isinstance(relation_sent[-1][0], int)
+            if len(relation[i]) > pooling_sent_limit:
+                relation_sent.append(relation[i][:pooling_sent_limit])
+        while len(relation_sent) < pooling_sent_limit:
+            relation_sent.append([0] * pooling_sent_limit)
+        assert len(relation_sent) == pooling_sent_limit
+
+        from itertools import groupby
+        result = [list(g) for k, g in groupby(input_ids, lambda x: x == 2) if not k]
+        assert len(result) == len(abs_relation)
+
+        abs_matrix = []
+        for i, item in enumerate(abs_relation):
+            if i == 0:
+                abs_matrix.extend([item+1] * len(result[i]))
+            else:
+                item_index = item +1
+                if item_index > 127:
+                    item_index = 127
+                abs_matrix.extend([item_index] * (len(result[i]) + 1))
+        assert len(input_ids) == len(abs_matrix)
+
+        while len(abs_matrix) < context_max_length +template_max_length:
+            abs_matrix.append(0)
+        if len(abs_matrix) > context_max_length + template_max_length:
+            abs_matrix = abs_matrix[:(context_max_length + template_max_length)]
     while len(input_ids) < context_max_length:
         input_ids.append(tokenizer.pad_token_id)
         attention_mask.append(0)
         token_type_ids.append(0)
+
     while len(template_ids) < template_max_length:
         template_ids.append(tokenizer.pad_token_id)
         template_attention_mask.append(0)
@@ -267,32 +271,32 @@ def tokenize_multipart_input(
             attention_mask = attention_mask[:context_max_length]
             token_type_ids = token_type_ids[:context_max_length]
 
+
     # Find mask token
-    if prompt:
-        mask_pos = [len(input_ids) + template_ids.index(tokenizer.mask_token_id)]
-        # Make sure that the masked position is inside the max_length
-        if 2 in input_ids:
-            comment_pos = input_ids.index(2)
-        else:
-            comment_pos = len(input_ids) - 1
-        assert mask_pos[0] < context_max_length + template_max_length
+    mask_pos = [len(input_ids) + template_ids.index(tokenizer.mask_token_id)]
+    # Make sure that the masked position is inside the max_length
+    if 2 in input_ids:
+        comment_pos = input_ids.index(2)
+    else:
+        comment_pos = len(input_ids) - 1
+    assert mask_pos[0] < context_max_length + template_max_length
 
     result = {'input_ids': input_ids,
               'template_input_ids': template_ids,
               'attention_mask': attention_mask,
               'template_attention_mask': template_attention_mask,
-
+              # 'relation': final_relation,
+              'relation_sent': relation_sent,
+              'abs_relation': abs_matrix
               }
     if 'BERT' in type(tokenizer).__name__:
         # Only provide token type ids for BERT
         result['token_type_ids'] = token_type_ids
 
-    if prompt:
-        result['mask_pos'] = mask_pos
-        result['comment_pos'] = comment_pos
-    # soft_label = torch.load("/home/ypy/code/LM-BFF/data/original/my_twi/timestamp_soft_label.pt")
-    # result['false_soft_label'] = soft_label['0']
-    # result['true_soft_label'] = soft_label['1']
+
+    result['mask_pos'] = mask_pos
+    result['comment_pos'] = comment_pos
+
     return result
 
 
@@ -351,15 +355,6 @@ class FewShotDataset(torch.utils.data.Dataset):
         # if ("train" in mode) or not self.use_demo:
         # We do not do multiple sampling when not using demonstrations or when it's the training mode
         self.num_sample = 1
-        # else:
-        #     self.num_sample = args.num_sample
-
-        # If we use multiple templates, we also need to do multiple sampling during inference.
-        # if args.prompt and args.template_list is not None:
-        #     logger.info("There are %d templates. Multiply num_sample by %d" % (len(args.template_list), len(args.template_list)))
-        #     self.num_sample *= len(args.template_list)
-
-        # logger.info("Total num_sample for mode %s: %d" % (mode, self.num_sample))
 
         # Load cache
         # Cache name distinguishes mode, task name, tokenizer, and length. So if you change anything beyond these elements, make sure to clear your cache.
@@ -377,67 +372,35 @@ class FewShotDataset(torch.utils.data.Dataset):
         logger.info(f"Creating/loading examples from dataset file at {args.data_dir}")
 
         lock_path = cached_features_file + ".lock"
-        with FileLock(lock_path):
 
-            if os.path.exists(cached_features_file) and not args.overwrite_cache:
-                start = time.time()
-                self.support_examples, self.query_examples = torch.load(cached_features_file)
-                logger.info(
-                    f"Loading features from cached file {cached_features_file} [took %.3f s]", time.time() - start
-                )
+        if os.path.exists(cached_features_file) and not args.overwrite_cache:
+            start = time.time()
+            self.support_examples, self.query_examples = torch.load(cached_features_file)
+            logger.info(
+                f"Loading features from cached file {cached_features_file} [took %.3f s]", time.time() - start
+            )
+        else:
+            logger.info(f"Creating features from dataset file at {args.data_dir}")
+
+            # The support examples are sourced from the training set.
+            if not self.false_flag:
+                self.support_examples = self.processor.get_train_examples(args.data_dir)
             else:
-                logger.info(f"Creating features from dataset file at {args.data_dir}")
+                self.support_examples = self.processor.get_train_false_examples(args.data_dir)
 
-                # The support examples are sourced from the training set.
-                if not self.false_flag:
-                    self.support_examples = self.processor.get_train_examples(args.data_dir)
-                else:
-                    self.support_examples = self.processor.get_train_false_examples(args.data_dir)
-
-                if mode == "dev":
-                    self.query_examples = self.processor.get_dev_examples(args.data_dir)
-                elif mode == "test":
-                    self.query_examples = self.processor.get_test_examples(args.data_dir)
-                else:
-                    self.query_examples = self.support_examples
-
-                start = time.time()
-                torch.save([self.support_examples, self.query_examples], cached_features_file)
-                # ^ This seems to take a lot of time so I want to investigate why and how we can improve.
-                logger.info(
-                    "Saving features into cached file %s [took %.3f s]", cached_features_file, time.time() - start
-                )
-
-        # For filtering in using demonstrations, load pre-calculated embeddings
-        if self.use_demo and args.demo_filter:
-            split_name = ''
-            if mode in ["base", "time", "tree"]:
-                split_name = 'train'
-            elif mode == 'dev':
-                if args.task_name == 'mnli':
-                    split_name = 'dev_matched'
-                elif args.task_name == 'mnli-mm':
-                    split_name = 'dev_mismatched'
-                else:
-                    split_name = 'dev'
-            elif mode == 'test':
-                if args.task_name == 'mnli':
-                    split_name = 'test_matched'
-                elif args.task_name == 'mnli-mm':
-                    split_name = 'test_mismatched'
-                else:
-                    split_name = 'test'
+            if mode == "dev":
+                self.query_examples = self.processor.get_dev_examples(args.data_dir)
+            elif mode == "test":
+                self.query_examples = self.processor.get_test_examples(args.data_dir)
             else:
-                raise NotImplementedError
-
-            self.support_emb = np.load(os.path.join(args.data_dir, "train_{}.npy".format(args.demo_filter_model)))
-            self.query_emb = np.load(
-                os.path.join(args.data_dir, "{}_{}.npy".format(split_name, args.demo_filter_model)))
-            logger.info("Load embeddings (for demonstration filtering) from {}".format(
-                os.path.join(args.data_dir, "{}_{}.npy".format(split_name, args.demo_filter_model))))
-
-            assert len(self.support_emb) == len(self.support_examples)
-            assert len(self.query_emb) == len(self.query_examples)
+                self.query_examples = self.support_examples
+            self.support_examples = self.query_examples
+            start = time.time()
+            torch.save([self.support_examples, self.query_examples], cached_features_file)
+            # ^ This seems to take a lot of time so I want to investigate why and how we can improve.
+            logger.info(
+                "Saving features into cached file %s [took %.3f s]", cached_features_file, time.time() - start
+            )
 
         # Size is expanded by num_sample
         self.size = len(self.query_examples) * self.num_sample
@@ -508,7 +471,8 @@ class FewShotDataset(torch.utils.data.Dataset):
                 # The input (query) example
                 example = self.query_examples[query_idx]
                 # The demonstrations
-                supports = self.select_context([self.support_examples[i] for i in context_indices])
+                supports = None
+                #supports = self.select_context([self.support_examples[i] for i in context_indices])
 
                 if args.template_list is not None:
                     template = args.template_list[sample_idx % len(args.template_list)]  # Use template in order
@@ -575,7 +539,8 @@ class FewShotDataset(torch.utils.data.Dataset):
             # The input (query) example
             example = self.query_examples[query_idx]
             # The demonstrations
-            supports = self.select_context([self.support_examples[i] for i in context_indices])
+            supports = None
+            # supports = self.select_context([self.support_examples[i] for i in context_indices])
 
             if self.args.template_list is not None:
                 template = self.args.template_list[sample_idx % len(self.args.template_list)]
@@ -634,87 +599,19 @@ class FewShotDataset(torch.utils.data.Dataset):
             example_label = label_map[example.label]
 
         # Prepare other features
-        if not use_demo:
             # No using demonstrations
-            inputs = tokenize_multipart_input(
-                input_text_list=input_example_to_tuple(example),
-                context_max_length=context_max_length,
-                template_max_length=template_max_length,
-                tokenizer=self.tokenizer,
-                task_name=self.args.task_name,
-                prompt=prompt,
-                template=template,
-                label_word_list=label_word_list,
-                first_sent_limit=self.args.first_sent_limit,
-                other_sent_limit=self.args.other_sent_limit,
-                mode=mode
-            )
-            features = OurInputFeatures(**inputs, label=example_label)
+        inputs = tokenize_multipart_input(
+            input_text_list=input_example_to_tuple(example),
+            context_max_length=context_max_length,
+            template_max_length=template_max_length,
+            tokenizer=self.tokenizer,
+            position_dataset=True,
+            template=template,
+            label_word_list=label_word_list,
+            pooling_sent_limit=128,
+        )
+        features = OurInputFeatures(**inputs, label=example_label)
 
-        else:
-            # Using demonstrations
-
-            # Max length
-            if self.args.double_demo:
-                # When using demonstrations, double the maximum length
-                # Note that in this case, args.max_seq_length is the maximum length for a single sentence
-                max_length = max_length * 2
-            if self.args.gpt3_in_context_head or self.args.gpt3_in_context_tail:
-                # When using GPT-3's in-context learning, take the maximum tokenization length of the model (512)
-                max_length = 512
-
-            # All input sentences, including the query and the demonstrations, are put into augmented_examples, 
-            # and are numbered based on the order (starting from 0). For single sentence tasks, the input (query)
-            # is the sentence 0; for sentence-pair tasks, the input (query) is the sentence 0 and 1. Note that for GPT-3's 
-            # in-context learning, the input (query) might be at the end instead of the beginning (gpt3_in_context_head)
-            augmented_example = []
-            query_text = input_example_to_tuple(example)  # Input sentence list for query
-            support_by_label = [[] for i in range(len(label_map))]
-
-            if self.args.gpt3_in_context_head or self.args.gpt3_in_context_tail:
-                support_labels = []
-                augmented_example = query_text
-                for support_example in supports:
-                    augmented_example += input_example_to_tuple(support_example)
-                    current_label = support_example.label
-                    if len(label_list) == 1:
-                        current_label = '0' if float(current_label) <= median_mapping[
-                            self.args.task_name] else '1'  # Regression
-                    support_labels.append(label_map[current_label])
-            else:
-                # Group support examples by label
-                for label_name, label_id in label_map.items():
-                    if len(label_list) == 1:
-                        # Regression
-                        for support_example in filter(lambda s: ('0' if float(s.label) <= median_mapping[
-                            self.args.task_name] else '1') == label_name, supports):
-                            support_by_label[label_id] += input_example_to_tuple(support_example)
-                    else:
-                        for support_example in filter(lambda s: s.label == label_name, supports):
-                            support_by_label[label_id] += input_example_to_tuple(support_example)
-
-                augmented_example = query_text
-                for label_id in range(len(label_map)):
-                    augmented_example += support_by_label[label_id]
-
-            # Tokenization (based on the template)
-            inputs = tokenize_multipart_input(
-                input_text_list=augmented_example,
-                context_max_length=context_max_length,
-                template_max_length=template_max_length,
-                tokenizer=self.tokenizer,
-                task_name=self.args.task_name,
-                prompt=prompt,
-                template=template,
-                label_word_list=label_word_list,
-                first_sent_limit=self.args.first_sent_limit,
-                other_sent_limit=self.args.other_sent_limit,
-                truncate_head=self.args.truncate_head,
-                gpt3=self.args.gpt3_in_context_head or self.args.gpt3_in_context_tail,
-                support_labels=None if not (
-                            self.args.gpt3_in_context_head or self.args.gpt3_in_context_tail) else support_labels
-            )
-            features = OurInputFeatures(**inputs, label=example_label)
 
         if verbose:
             logger.info("*** Example ***")
